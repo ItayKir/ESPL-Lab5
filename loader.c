@@ -7,6 +7,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <elf.h>
+#include <string.h>
 
 /* Helper function to convert the p_type integer to a readable string */
 const char* type_to_str(Elf32_Word type) {
@@ -124,13 +125,33 @@ void load_phdr(Elf32_Phdr *phdr, int fd) {
         exit(1);
     }
     
+
+    // FIX: The .bss section bug
+    // If the memory size is strictly larger than the file size, the segment contains .bss data.
+    // mmap pulled in file garbage for this extra space, so we must manually zero it out!
+    if (phdr->p_memsz > phdr->p_filesz) {
+        // Calculate exactly where the file data ends and the uninitialized data begins
+        Elf32_Addr bss_start = phdr->p_vaddr + phdr->p_filesz;
+        Elf32_Word bss_size = phdr->p_memsz - phdr->p_filesz;
+        
+        // Zero-fill the uninitialized memory to satisfy the C standard
+        memset((void *)bss_start, 0, bss_size);
+    }
     // Optional: Print a success message for debugging
     // print_phdr_info(phdr, 0); // You can call your Task 1a function here to trace what loaded
 }
 
+/* * Declare the assembly function provided in startup.o 
+ * This function perfectly mimics the Linux kernel's initial stack setup
+ * before jumping to the entry point.
+ */
+extern void startup(int argc, char **argv, void *start);
+
 int main(int argc, char **argv) {
-    if (argc != 2) {
-        fprintf(stderr, "Usage: %s <32-bit-elf-executable>\n", argv[0]);
+    // 1. Notice the change here: argc < 2 (instead of != 2)
+    // This allows us to pass additional arguments to the loaded program!
+    if (argc < 2) {
+        fprintf(stderr, "Usage: %s <32-bit-elf-executable> [arg1 arg2 ...]\n", argv[0]);
         return 1;
     }
 
@@ -147,6 +168,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    // Map the file temporarily just to read the ELF and Program Headers
     void *map_start = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
     if (map_start == MAP_FAILED) {
         perror("mmap failed");
@@ -154,15 +176,26 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Print the column headers for the output
-    printf("%-7s %-8s %-10s %-10s %-7s %-7s %-3s %s\n",
-           "Type", "Offset", "VirtAddr", "PhysAddr", "FileSiz", "MemSiz", "Flg", "Align");
+    // 2. Execute the loader (Task 2b)
+    foreach_phdr(map_start, load_phdr, fd);
 
-    // Execute the iterator with the new Task 1a callback
-    foreach_phdr(map_start, print_phdr_info, 0);
+    // 3. Extract the Entry Point
+    // The ELF header holds e_entry, the exact virtual address where the program begins
+    Elf32_Ehdr *ehdr = (Elf32_Ehdr *)map_start;
+    void *entry_point = (void *)ehdr->e_entry;
 
+    // 4. Clean up our temporary blueprint mapping
+    // We unmap map_start because the target program doesn't need to read its own headers.
+    // However, we DO NOT close(fd)! The segments mapped in load_phdr are actively using it.
     munmap(map_start, st.st_size);
-    close(fd);
 
+    // 5. Hand over control! (Tasks 2c & 2d)
+    // argc - 1: We subtract 1 to hide our loader's name from the target program.
+    // argv + 1: We shift the array pointer forward by 1, making the target program's name its argv[0].
+    startup(argc - 1, argv + 1, entry_point);
+
+    // The startup function transitions execution to the loaded program. 
+    // That program will eventually call the exit() system call itself.
+    // Therefore, this line of code will absolutely never be reached!
     return 0;
 }
