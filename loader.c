@@ -70,6 +70,30 @@ void print_phdr_info(Elf32_Phdr *phdr, int arg) {
            phdr->p_align);
 }
 
+/*
+ * Task 1b: Map ELF program header flags to mmap protection flags.
+ * * p_flags: The p_flags field extracted from an Elf32_Phdr struct.
+ * Returns: A bitmask of PROT_* flags suitable for the mmap() system call.
+ */
+int get_prot_flags(int p_flags) {
+    int prot = 0; // Default to PROT_NONE (0)
+
+    // Translate Read flag
+    if (p_flags & PF_R) {
+        prot |= PROT_READ;
+    }
+    // Translate Write flag
+    if (p_flags & PF_W) {
+        prot |= PROT_WRITE;
+    }
+    // Translate Execute flag
+    if (p_flags & PF_X) {
+        prot |= PROT_EXEC;
+    }
+
+    return prot;
+}
+
 int main(int argc, char **argv) {
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <32-bit-elf-executable>\n", argv[0]);
