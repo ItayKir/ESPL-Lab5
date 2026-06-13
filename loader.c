@@ -94,6 +94,40 @@ int get_prot_flags(int p_flags) {
     return prot;
 }
 
+/*
+ * Task 2b: The loading callback function.
+ * Maps PT_LOAD segments into memory at their specified virtual addresses.
+ */
+void load_phdr(Elf32_Phdr *phdr, int fd) {
+    // 1. We ONLY care about segments that the linker marked as "LOAD"
+    if (phdr->p_type != PT_LOAD) {
+        return;
+    }
+
+    // 2. Translate the ELF protection flags into mmap protection flags (Task 1b)
+    int prot = get_prot_flags(phdr->p_flags);
+
+    // 3. Calculate Page-Aligned Addresses using Bitwise masks
+    // 0xfffff000 zeroes out the last 3 hex digits (12 bits), rounding down to a multiple of 0x1000
+    // 0xfff isolates ONLY the last 3 hex digits, giving us the exact padding amount
+    Elf32_Addr vaddr = phdr->p_vaddr & 0xfffff000;
+    Elf32_Off offset = phdr->p_offset & 0xfffff000;
+    Elf32_Word padding = phdr->p_vaddr & 0xfff;
+
+    // 4. Map the segment into memory
+    // MAP_PRIVATE: Don't write changes back to the actual file
+    // MAP_FIXED: Put it EXACTLY at the virtual address specified
+    void *mapped_mem = mmap((void *)vaddr, phdr->p_memsz + padding, prot, MAP_PRIVATE | MAP_FIXED, fd, offset);
+
+    if (mapped_mem == MAP_FAILED) {
+        perror("mmap failed inside load_phdr");
+        exit(1);
+    }
+    
+    // Optional: Print a success message for debugging
+    // print_phdr_info(phdr, 0); // You can call your Task 1a function here to trace what loaded
+}
+
 int main(int argc, char **argv) {
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <32-bit-elf-executable>\n", argv[0]);
